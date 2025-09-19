@@ -1,14 +1,4 @@
 <!DOCTYPE html>
-<html lang="en" >
-<head>
-  <meta charset="UTF-8">
-  <title>Untitled</title>
-  
-
-</head>
-<body>
-<!-- partial:index.partial.html -->
-<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -53,22 +43,18 @@
     tbody td { padding: 12px; color: var(--text-secondary); font-size: 13px; }
     tbody tr:hover td { background: #111; }
 
-    /* --- Type logo cell --- */
     .type-wrap { display:flex; align-items:center; gap:10px; }
     .type-logo {
-      width: 1.5cm;
-      height: 1cm;
-      max-width: 120px;
-      max-height: 80px;
-      display: block;
-      object-fit: contain;
+      width: 1.5cm; height: 1cm;
+      max-width: 120px; max-height: 80px;
+      display: block; object-fit: contain;
       image-rendering: -webkit-optimize-contrast;
       image-rendering: crisp-edges;
     }
 
     .badge.currency {
       background: var(--badge-bg); color: var(--badge-text);
-      padding: 2px 6px; border-radius: 4px; font-size: 11px; display:inline-block;
+      padding: 2px 6px; border-radius: 4px; font-size: 11px;
     }
     .time { display:block; color: var(--text-secondary); font-size: 14px; margin-top: 2px; }
     td.positive { color: var(--accent-positive); font-weight: 600; }
@@ -96,7 +82,7 @@
 <body>
   <div class="container">
     <main class="main">
-      <div class="table-container">
+      <div class="table-container" id="scrollbox">
         <table>
           <thead>
             <tr>
@@ -115,7 +101,7 @@
       </div>
       <div class="summary">
         <span>Profit/loss on the last 150 contracts</span>
-        <span class="total-profit" id="total-profit">0.00</span>
+        <span class="total-profit" id="total-profit">+0.00</span>
       </div>
     </main>
   </div>
@@ -130,17 +116,19 @@
 
     const tbody            = document.getElementById('trade-body');
     const totalProfitEl    = document.getElementById('total-profit');
+    const scrollBox        = document.getElementById('scrollbox');
     const STORAGE_TRADES   = 'persistedTrades';
     const STORAGE_PROFIT   = 'persistedTotalProfit';
+    const STORAGE_VERSION  = 'persistedVersion_v4_12mo_40to80_5kto8k'; // bump for new rules if reseeding
 
     let trades      = JSON.parse(localStorage.getItem(STORAGE_TRADES)) || [];
     let totalProfit = parseFloat(localStorage.getItem(STORAGE_PROFIT));
     if (isNaN(totalProfit)) totalProfit = 0;
 
-    // --- Formatting helpers (UTC, en-GB) ---
     const fmtDate = d => new Intl.DateTimeFormat('en-GB', {
       day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC'
     }).format(d);
+
     const fmtTime = d => new Intl.DateTimeFormat('en-GB', {
       hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC'
     }).format(d);
@@ -161,16 +149,19 @@
     function rowHTML(data) {
       const buyDate  = data.buyTime ? new Date(data.buyTime)  : new Date();
       const sellDate = data.sellTime ? new Date(data.sellTime) : new Date();
-      const isLoss   = Number(data.profit || 0) < 0;
 
-      const cls  = isLoss ? 'negative' : 'positive';
-      const sign = isLoss ? '' : '+';
+      const cls  = data.profit >= 0 ? 'positive' : 'negative';
+      const sign = data.profit >= 0 ? '+' : '';
       const refId = formatRefId();
-      const contractValue = isLoss ? '0.00' : (data.stake + data.profit).toFixed(2);
+
+      // **** UPDATED RULE: Contract Value always shows (stake + profit).
+      // For losses (negative profit), this equals (stake - loss amount).
+      const cv = (Number(data.stake||0) + Number(data.profit||0)).toFixed(2);
+
       const logo = pickLogo(data.logo);
 
       return `
-        <tr>
+        <tr data-profit="${Number(data.profit||0).toFixed(2)}">
           <td>
             <div class="type-wrap">
               <img class="type-logo" src="${logo}" alt="type-logo" />
@@ -181,32 +172,43 @@
           <td>${fmtDate(buyDate)}<br><span class="time">${fmtTime(buyDate)} GMT</span></td>
           <td>${Number(data.stake||0).toFixed(2)}</td>
           <td>${fmtDate(sellDate)}<br><span class="time">${fmtTime(sellDate)} GMT</span></td>
-          <td>${contractValue}</td>
+          <td>${cv}</td>
           <td class="${cls}">${sign}${Number(data.profit||0).toFixed(2)}</td>
         </tr>`;
     }
 
-    // Ensure saved trades show newest (e.g., September) at the TOP, going down to older (e.g., March)
     function renderSavedTrades() {
-      tbody.innerHTML = '';
-      const sorted = trades.slice().sort((a, b) => {
-        const ab = new Date(a.buyTime || 0).getTime();
-        const bb = new Date(b.buyTime || 0).getTime();
-        return bb - ab; // DESC: newest first
-      });
-      sorted.forEach(data => {
-        tbody.insertAdjacentHTML('beforeend', rowHTML(data));
+      trades.slice().reverse().forEach(data => {
+        tbody.insertAdjacentHTML('afterbegin', rowHTML(data));
       });
     }
 
+    function formatSigned(n) {
+      return (n >= 0 ? '+' : '') + Math.abs(n).toLocaleString('en-GB', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+
+    // Scroll-aware running total
+    function updateRunningTotalOnScroll() {
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const cutoff = scrollBox.scrollTop + scrollBox.clientHeight;
+      let sum = 0;
+      for (const tr of rows) {
+        const top = tr.offsetTop;
+        const mid = top + tr.offsetHeight / 2;
+        if (mid <= cutoff) {
+          sum += parseFloat(tr.dataset.profit || '0');
+        } else {
+          break;
+        }
+      }
+      totalProfitEl.textContent = formatSigned(sum);
+    }
+
     function updateTotalProfitDisplay() {
-      // Sum only the latest 150 as per label
-      const sorted = trades.slice().sort((a,b)=> new Date(b.buyTime) - new Date(a.buyTime));
-      const last150 = sorted.slice(0,150);
-      const sum = last150.reduce((acc,t)=> acc + Number(t.profit||0), 0);
-      totalProfitEl.textContent =
-        (sum >= 0 ? '+' : '') +
-        sum.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      totalProfitEl.textContent = formatSigned(totalProfit);
     }
 
     function addTrade(data) {
@@ -217,82 +219,68 @@
         sellTime: data?.sellTime || new Date().toISOString(),
         logo: data?.logo || undefined
       };
-
-      // Newest trade goes to the TOP
       tbody.insertAdjacentHTML('afterbegin', rowHTML(data));
-
+      totalProfit += data.profit;
+      localStorage.setItem(STORAGE_PROFIT, totalProfit);
       trades.unshift(data);
       localStorage.setItem(STORAGE_TRADES, JSON.stringify(trades));
-      updateTotalProfitDisplay();
+      updateRunningTotalOnScroll();
     }
 
-    // ---------- SEEDING: 6 months ending 2025-09-18 ----------
-    function rand(min, max) { return Math.random() * (max - min) + min; }
-    function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+    // ---------- SEEDER: last 12 months up to 2025-09-18 ----------
+    (function maybeSeed() {
+      const alreadySeeded = localStorage.getItem(STORAGE_VERSION) === '1';
+      const urlForce = new URLSearchParams(location.search).get('forceSeed') === 'true';
+      if (trades.length && alreadySeeded && !urlForce) {
+        renderSavedTrades();
+        updateRunningTotalOnScroll();
+        return;
+      }
 
-    function clampDate(d, minD, maxD){
-      return new Date(Math.max(minD.getTime(), Math.min(maxD.getTime(), d.getTime())));
-    }
+      // Months: Oct 2024 .. Sep 2025 (Sep capped to 18th)
+      const months = [];
+      for (let y = 2024, m = 10; y < 2026; ) {
+        months.push({ year: y, month: m }); // 1..12
+        if (y === 2025 && m === 9) break;
+        m++;
+        if (m === 13) { m = 1; y++; }
+      }
 
-    function monthBounds(year, month /*1-12*/) {
-      const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
-      const end   = new Date(Date.UTC(year, month, 0, 23, 59, 59));
-      return {start, end};
-    }
+      function randInt(min, max){ return Math.floor(Math.random()*(max-min+1))+min; }
+      function randFloat(min, max){ return Math.random()*(max-min)+min; }
 
-    function randomDateBetween(start, end) {
-      const t = rand(start.getTime(), end.getTime());
-      return new Date(t);
-    }
-
-    function seedSixMonthsIfEmpty() {
-      if (trades.length) { renderSavedTrades(); updateTotalProfitDisplay(); return; }
-
-      const END = new Date('2025-09-18T23:59:59Z');
-      const months = [
-        { y: 2025, m: 9, startDay: 1, endLimiter: END },   // Sep 1 - Sep 18
-        { y: 2025, m: 8 },
-        { y: 2025, m: 7 },
-        { y: 2025, m: 6 },
-        { y: 2025, m: 5 },
-        { y: 2025, m: 4 },
-        { y: 2025, m: 3, startDay: 18 }                    // Mar 18 - Mar 31
-      ];
+      function randomDateInMonth(year, month /*1-12*/) {
+        const isSep2025 = (year === 2025 && month === 9);
+        const lastDay   = isSep2025 ? 18 : new Date(year, month, 0).getDate();
+        const day = randInt(1, lastDay);
+        const hour = randInt(0, 21); // keep room for +2h
+        const minute = randInt(0, 59);
+        const second = randInt(0, 59);
+        return new Date(Date.UTC(year, month-1, day, hour, minute, second));
+      }
 
       const generated = [];
 
-      for (const mon of months) {
-        const {start, end} = monthBounds(mon.y, mon.m);
-        const monthStart = mon.startDay ? new Date(Date.UTC(mon.y, mon.m-1, mon.startDay, 0, 0, 0)) : start;
-        const monthEnd   = mon.endLimiter ? mon.endLimiter : end;
+      months.forEach(({year, month}) => {
+        const tradeCount = randInt(20, 30); // keep density
+        const lossIndex  = randInt(0, tradeCount - 1); // exactly 1 loss per month
 
-        // trades per month: 30-40
-        const nTrades = randInt(30, 40);
-        // losses per month: 1-3
-        const nLosses = randInt(1, 3);
-        const lossIdxs = new Set();
-        while (lossIdxs.size < nLosses) lossIdxs.add(randInt(0, nTrades-1));
+        for (let i=0; i<tradeCount; i++){
+          const buy = randomDateInMonth(year, month);
+          const durMin = randInt(30, 120); // 30min – 2h
+          const sell = new Date(buy.getTime() + durMin*60*1000);
 
-        for (let i=0;i<nTrades;i++){
-          // buy time within bounds
-          const buy = randomDateBetween(monthStart, monthEnd);
-          // duration 30–120 minutes
-          const minutes = randInt(30, 120);
-          const sell = clampDate(new Date(buy.getTime() + minutes*60*1000), monthStart, monthEnd);
+          const stake = Math.round(randFloat(5, 100)*100)/100;
 
-          // stake $10–$100
-          const stake = Math.round(rand(10, 100) * 100) / 100;
-
-          const isLoss = lossIdxs.has(i);
           let profit;
-          if (isLoss) {
-            // loss size between -30% and -100% of stake
-            const lossPct = rand(0.30, 1.00);
-            profit = -Math.round(stake * lossPct * 100) / 100;
+          if (i === lossIndex) {
+            // Small loss
+            profit = -Math.round(randFloat(0.50, 2.50)*100)/100;
           } else {
-            // profit between +5% and +35% of stake
-            const winPct = rand(0.05, 0.35);
-            profit = Math.round(stake * winPct * 100) / 100;
+            // Win must be between 40%–80% of stake
+            const pMin = Math.max(0.40 * stake, 0.50);
+            const pMax = 0.80 * stake;
+            profit = Math.round(randFloat(pMin, pMax)*100)/100;
           }
 
           generated.push({
@@ -300,33 +288,108 @@
             profit,
             buyTime: buy.toISOString(),
             sellTime: sell.toISOString(),
-            logo: pickLogo()
+            logo: undefined
           });
         }
+      });
+
+      // —— Scale positives so TOTAL is within $5,000–$8,000 while keeping 40–80% rule ——
+      const positives = generated.filter(t => t.profit > 0);
+      const negatives = generated.filter(t => t.profit < 0);
+      const sumPos0   = positives.reduce((s,t)=>s+t.profit,0);
+      const sumNeg    = negatives.reduce((s,t)=>s+t.profit,0); // negative number
+      const target    = (function(){ const x=Math.random(); return 5000 + x*(8000-5000); })();
+
+      const candidate = (target - sumNeg) / Math.max(1e-6, sumPos0);
+
+      let minFactor = -Infinity, maxFactor = Infinity;
+      positives.forEach(t=>{
+        const p0 = t.profit, s = t.stake;
+        const lo = (0.40*s)/p0;
+        const hi = (0.80*s)/p0;
+        const fmin = Math.min(lo,hi), fmax = Math.max(lo,hi);
+        minFactor = Math.max(minFactor, fmin);
+        maxFactor = Math.min(maxFactor, fmax);
+      });
+      const factor = Math.min(Math.max(candidate, minFactor), maxFactor);
+
+      positives.forEach(t=>{
+        const s = t.stake;
+        const p = t.profit * factor;
+        const lo = Math.max(0.40*s, 0.50);
+        const hi = 0.80*s;
+        t.profit = Math.min(hi, Math.max(lo, Math.round(p*100)/100));
+      });
+
+      function tuneToward(targetTotal){
+        let total = positives.reduce((s,t)=>s+t.profit,0) + sumNeg;
+        let delta = Math.round((targetTotal - total)*100)/100;
+
+        const maxIters = 3;
+        for (let pass=0; pass<maxIters && Math.abs(delta) >= 0.02; pass++){
+          if (delta > 0){
+            let room = positives.reduce((s,t)=> s + (0.80*t.stake - t.profit), 0);
+            if (room <= 0.01) break;
+            positives.forEach(t=>{
+              if (delta <= 0) return;
+              const cap = Math.max(0, Math.floor(((0.80*t.stake - t.profit))*100)/100);
+              if (cap <= 0) return;
+              const add = Math.min(cap, Math.round((delta * (t.profit/Math.max(1e-6, sumPos0)))*100)/100 || 0.01);
+              t.profit = Math.round((t.profit + add)*100)/100;
+              delta = Math.round((delta - add)*100)/100;
+            });
+          } else {
+            let room = positives.reduce((s,t)=> s + (t.profit - Math.max(0.40*t.stake, 0.50)), 0);
+            if (room <= 0.01) break;
+            positives.forEach(t=>{
+              if (delta >= 0) return;
+              const floor = Math.max(0.40*t.stake, 0.50);
+              const cap = Math.max(0, Math.floor((t.profit - floor)*100)/100);
+              if (cap <= 0) return;
+              const cut = Math.min(cap, Math.round(((-delta) * (t.profit/Math.max(1e-6, sumPos0)))*100)/100 || 0.01);
+              t.profit = Math.round((t.profit - cut)*100)/100;
+              delta = Math.round((delta + cut)*100)/100;
+            });
+          }
+          total = positives.reduce((s,t)=>s+t.profit,0) + sumNeg;
+          delta = Math.round((targetTotal - total)*100)/100;
+        }
       }
+      tuneToward(target);
 
-      // Save, render newest first
-      trades = generated.slice(); // already a flat list
+      generated.sort((a,b)=> new Date(b.buyTime) - new Date(a.buyTime));
+
+      trades = generated.slice();
+      totalProfit = trades.reduce((s,t)=>s+t.profit,0);
+
       localStorage.setItem(STORAGE_TRADES, JSON.stringify(trades));
+      localStorage.setItem(STORAGE_PROFIT, totalProfit);
+      localStorage.setItem(STORAGE_VERSION, '1');
+
       renderSavedTrades();
-      updateTotalProfitDisplay();
-    }
+      updateRunningTotalOnScroll();
+    })();
+    // ---------------------------------------------------------------------
 
-    seedSixMonthsIfEmpty();
+    // Update bottom total on scroll / load / resize
+    scrollBox.addEventListener('scroll', updateRunningTotalOnScroll);
+    window.addEventListener('load', () => setTimeout(updateRunningTotalOnScroll, 50));
+    window.addEventListener('resize', updateRunningTotalOnScroll);
 
-    // ---------- Live channel for adding new trades on top ----------
+    // live channel appender (kept)
     const profitChannel = new BroadcastChannel('trade-profits');
     profitChannel.onmessage = ({ data }) => addTrade(data);
 
-    // Example (disabled):
-    // setInterval(() => {
-    //   const p = (Math.random() > 0.5 ? 1 : -1) * (5 + Math.random() * 50);
-    //   addTrade({ stake: 100, profit: p });
-    // }, 4000);
+    /*
+    // demo adder (disabled)
+    setInterval(() => {
+      const stake = 50 + Math.random()*50;
+      const profit = Math.random() > 0.5
+        ? +(Math.max(0.4*stake,0.5) + Math.random()*(0.8*stake - Math.max(0.4*stake,0.5))).toFixed(2)
+        : -+(Math.random()*2 + 0.5).toFixed(2);
+      addTrade({ stake, profit });
+    }, 4000);
+    */
   </script>
-</body>
-</html>
-<!-- partial -->
-  
 </body>
 </html>
