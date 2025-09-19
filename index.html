@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en" >
+<head>
+  <meta charset="UTF-8">
+  <title>Untitled</title>
+  
+
+</head>
+<body>
+<!-- partial:index.partial.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Binary Profit Table (Frontend)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer"/>
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <style>
+    :root {
+      --sidebar-bg:     #0e0e0e;
+      --main-bg:        #0e0e0e;
+      --header-bg:      #0e0e0e;
+      --text-primary:   #ffffff;
+      --text-secondary: #cccccc;
+      --accent-positive:#00d0b2;
+      --accent-negative:#f44336;
+      --badge-bg:       #5b8a92;
+      --badge-text:     #ffffff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Inter, sans-serif;
+      font-feature-settings: 'tnum';
+      background: var(--main-bg);
+      color: var(--text-primary);
+      font-size: 14px;
+    }
+    .container { display: flex; height: 100vh; flex-direction: column; }
+    main.main { flex: 1; padding: 20px; display: flex; flex-direction: column; }
+    .table-container {
+      flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: none;
+      background-color: var(--main-bg); max-height: calc(100vh - 50px);
+    }
+    .table-container::-webkit-scrollbar { display: none; }
+    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    thead th {
+      position: sticky; top: 0; background: var(--header-bg);
+      padding: 12px; color: var(--text-primary); text-align: left;
+      font-size: 13px; font-weight: 500;
+    }
+    tbody td { padding: 12px; color: var(--text-secondary); font-size: 13px; }
+    tbody tr:hover td { background: #111; }
+
+    /* --- Type logo cell --- */
+    .type-wrap { display:flex; align-items:center; gap:10px; }
+    .type-logo {
+      width: 1.5cm;
+      height: 1cm;
+      max-width: 120px;
+      max-height: 80px;
+      display: block;
+      object-fit: contain;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
+    }
+
+    .badge.currency {
+      background: var(--badge-bg); color: var(--badge-text);
+      padding: 2px 6px; border-radius: 4px; font-size: 11px; display:inline-block;
+    }
+    .time { display:block; color: var(--text-secondary); font-size: 14px; margin-top: 2px; }
+    td.positive { color: var(--accent-positive); font-weight: 600; }
+    td.negative { color: var(--accent-negative); font-weight: 600; }
+    tbody td:nth-child(2),
+    tbody td:nth-child(4),
+    tbody td:nth-child(5),
+    tbody td:nth-child(6),
+    tbody td:nth-child(7) {
+      color:#eee; font-size:14px; font-weight:500; opacity:.7;
+    }
+    td:nth-child(8) { font-size:14px; }
+
+    .summary {
+      position: sticky; bottom: 0; background: var(--main-bg); z-index: 1;
+      margin-top: 10px; display: flex; font-size: 13px; font-weight: 600;
+      color: var(--text-secondary); padding: 10px 0 0; border-top: 1px solid #222;
+    }
+    .summary span:first-child { flex: 7; }
+    .summary .total-profit {
+      flex: 1; color: var(--accent-positive); font-size: 14px; text-align: left; margin-left: -7cm;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <main class="main">
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Ref. ID</th>
+              <th>Currency</th>
+              <th>Buy time</th>
+              <th>Stake</th>
+              <th>Sell time</th>
+              <th>Contract value</th>
+              <th>Total profit/loss</th>
+            </tr>
+          </thead>
+          <tbody id="trade-body"></tbody>
+        </table>
+      </div>
+      <div class="summary">
+        <span>Profit/loss on the last 150 contracts</span>
+        <span class="total-profit" id="total-profit">0.00</span>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // ==== CONFIGURABLE: PNG logo links for the "Type" column ====
+    window.TYPE_LOGOS = [
+      "https://iili.io/KxDwyen.png",
+      "https://iili.io/KxDOC4p.png"
+    ];
+    // =============================================================
+
+    const tbody            = document.getElementById('trade-body');
+    const totalProfitEl    = document.getElementById('total-profit');
+    const STORAGE_TRADES   = 'persistedTrades';
+    const STORAGE_PROFIT   = 'persistedTotalProfit';
+
+    let trades      = JSON.parse(localStorage.getItem(STORAGE_TRADES)) || [];
+    let totalProfit = parseFloat(localStorage.getItem(STORAGE_PROFIT));
+    if (isNaN(totalProfit)) totalProfit = 0;
+
+    // --- Formatting helpers (UTC, en-GB) ---
+    const fmtDate = d => new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC'
+    }).format(d);
+    const fmtTime = d => new Intl.DateTimeFormat('en-GB', {
+      hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC'
+    }).format(d);
+
+    function formatRefId() {
+      let rest = '';
+      for (let i = 0; i < 10; i++) rest += Math.floor(Math.random() * 10);
+      return '14' + rest;
+    }
+
+    function pickLogo(customUrl) {
+      if (customUrl) return customUrl;
+      const list = Array.isArray(window.TYPE_LOGOS) && window.TYPE_LOGOS.length ? window.TYPE_LOGOS : [];
+      if (!list.length) return '';
+      return list[Math.floor(Math.random() * list.length)];
+    }
+
+    function rowHTML(data) {
+      const buyDate  = data.buyTime ? new Date(data.buyTime)  : new Date();
+      const sellDate = data.sellTime ? new Date(data.sellTime) : new Date();
+      const isLoss   = Number(data.profit || 0) < 0;
+
+      const cls  = isLoss ? 'negative' : 'positive';
+      const sign = isLoss ? '' : '+';
+      const refId = formatRefId();
+      const contractValue = isLoss ? '0.00' : (data.stake + data.profit).toFixed(2);
+      const logo = pickLogo(data.logo);
+
+      return `
+        <tr>
+          <td>
+            <div class="type-wrap">
+              <img class="type-logo" src="${logo}" alt="type-logo" />
+            </div>
+          </td>
+          <td>${refId}</td>
+          <td><span class="badge currency">USD</span></td>
+          <td>${fmtDate(buyDate)}<br><span class="time">${fmtTime(buyDate)} GMT</span></td>
+          <td>${Number(data.stake||0).toFixed(2)}</td>
+          <td>${fmtDate(sellDate)}<br><span class="time">${fmtTime(sellDate)} GMT</span></td>
+          <td>${contractValue}</td>
+          <td class="${cls}">${sign}${Number(data.profit||0).toFixed(2)}</td>
+        </tr>`;
+    }
+
+    // Ensure saved trades show newest (e.g., September) at the TOP, going down to older (e.g., March)
+    function renderSavedTrades() {
+      tbody.innerHTML = '';
+      const sorted = trades.slice().sort((a, b) => {
+        const ab = new Date(a.buyTime || 0).getTime();
+        const bb = new Date(b.buyTime || 0).getTime();
+        return bb - ab; // DESC: newest first
+      });
+      sorted.forEach(data => {
+        tbody.insertAdjacentHTML('beforeend', rowHTML(data));
+      });
+    }
+
+    function updateTotalProfitDisplay() {
+      // Sum only the latest 150 as per label
+      const sorted = trades.slice().sort((a,b)=> new Date(b.buyTime) - new Date(a.buyTime));
+      const last150 = sorted.slice(0,150);
+      const sum = last150.reduce((acc,t)=> acc + Number(t.profit||0), 0);
+      totalProfitEl.textContent =
+        (sum >= 0 ? '+' : '') +
+        sum.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function addTrade(data) {
+      data = {
+        stake:  Number(data?.stake ?? 0),
+        profit: Number(data?.profit ?? 0),
+        buyTime: data?.buyTime || new Date().toISOString(),
+        sellTime: data?.sellTime || new Date().toISOString(),
+        logo: data?.logo || undefined
+      };
+
+      // Newest trade goes to the TOP
+      tbody.insertAdjacentHTML('afterbegin', rowHTML(data));
+
+      trades.unshift(data);
+      localStorage.setItem(STORAGE_TRADES, JSON.stringify(trades));
+      updateTotalProfitDisplay();
+    }
+
+    // ---------- SEEDING: 6 months ending 2025-09-18 ----------
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+    function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+
+    function clampDate(d, minD, maxD){
+      return new Date(Math.max(minD.getTime(), Math.min(maxD.getTime(), d.getTime())));
+    }
+
+    function monthBounds(year, month /*1-12*/) {
+      const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+      const end   = new Date(Date.UTC(year, month, 0, 23, 59, 59));
+      return {start, end};
+    }
+
+    function randomDateBetween(start, end) {
+      const t = rand(start.getTime(), end.getTime());
+      return new Date(t);
+    }
+
+    function seedSixMonthsIfEmpty() {
+      if (trades.length) { renderSavedTrades(); updateTotalProfitDisplay(); return; }
+
+      const END = new Date('2025-09-18T23:59:59Z');
+      const months = [
+        { y: 2025, m: 9, startDay: 1, endLimiter: END },   // Sep 1 - Sep 18
+        { y: 2025, m: 8 },
+        { y: 2025, m: 7 },
+        { y: 2025, m: 6 },
+        { y: 2025, m: 5 },
+        { y: 2025, m: 4 },
+        { y: 2025, m: 3, startDay: 18 }                    // Mar 18 - Mar 31
+      ];
+
+      const generated = [];
+
+      for (const mon of months) {
+        const {start, end} = monthBounds(mon.y, mon.m);
+        const monthStart = mon.startDay ? new Date(Date.UTC(mon.y, mon.m-1, mon.startDay, 0, 0, 0)) : start;
+        const monthEnd   = mon.endLimiter ? mon.endLimiter : end;
+
+        // trades per month: 30-40
+        const nTrades = randInt(30, 40);
+        // losses per month: 1-3
+        const nLosses = randInt(1, 3);
+        const lossIdxs = new Set();
+        while (lossIdxs.size < nLosses) lossIdxs.add(randInt(0, nTrades-1));
+
+        for (let i=0;i<nTrades;i++){
+          // buy time within bounds
+          const buy = randomDateBetween(monthStart, monthEnd);
+          // duration 30–120 minutes
+          const minutes = randInt(30, 120);
+          const sell = clampDate(new Date(buy.getTime() + minutes*60*1000), monthStart, monthEnd);
+
+          // stake $10–$100
+          const stake = Math.round(rand(10, 100) * 100) / 100;
+
+          const isLoss = lossIdxs.has(i);
+          let profit;
+          if (isLoss) {
+            // loss size between -30% and -100% of stake
+            const lossPct = rand(0.30, 1.00);
+            profit = -Math.round(stake * lossPct * 100) / 100;
+          } else {
+            // profit between +5% and +35% of stake
+            const winPct = rand(0.05, 0.35);
+            profit = Math.round(stake * winPct * 100) / 100;
+          }
+
+          generated.push({
+            stake,
+            profit,
+            buyTime: buy.toISOString(),
+            sellTime: sell.toISOString(),
+            logo: pickLogo()
+          });
+        }
+      }
+
+      // Save, render newest first
+      trades = generated.slice(); // already a flat list
+      localStorage.setItem(STORAGE_TRADES, JSON.stringify(trades));
+      renderSavedTrades();
+      updateTotalProfitDisplay();
+    }
+
+    seedSixMonthsIfEmpty();
+
+    // ---------- Live channel for adding new trades on top ----------
+    const profitChannel = new BroadcastChannel('trade-profits');
+    profitChannel.onmessage = ({ data }) => addTrade(data);
+
+    // Example (disabled):
+    // setInterval(() => {
+    //   const p = (Math.random() > 0.5 ? 1 : -1) * (5 + Math.random() * 50);
+    //   addTrade({ stake: 100, profit: p });
+    // }, 4000);
+  </script>
+</body>
+</html>
+<!-- partial -->
+  
+</body>
+</html>
